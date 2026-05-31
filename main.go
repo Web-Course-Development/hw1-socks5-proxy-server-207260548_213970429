@@ -44,9 +44,49 @@ func handleConnection(conn net.Conn) {
 		log.Printf("failed to read to buffer: %v", err)
 		return
 	}
-	//verify SOCKS (SOCKS5)
-	if buffer[0] != 5 {
-		log.Printf("wrong SOCKS version: %d", buffer[0])
+	//verify SOCKS (SOCKS5) (note to self: use hex instead of decimals, it's apparently customary in networks)
+	if buffer[0] != 0x05 {
+		log.Printf("wrong SOCKS version: %x", buffer[0])
+		return
+	}
+
+	//number of methods is stored in the second byte of the buffer
+	methods_num := int(buffer[1])
+	//new buffer to hold enough methods
+	methods := make([]byte, methods_num)
+	//read to methods buffer
+	_, err = io.ReadFull(conn, methods)
+	if err != nil {
+		log.Printf("failed to read methods: %v", err)
+		return
+	}
+
+	//get method request
+	//set default = no Auth
+	req_method := byte(0x00)
+	if os.Getenv("PROXY_USER") != "" {
+		// 2 requires user/pass
+		req_method = 0x02
+	}
+	//loop through to check if we support the methods that the client wants
+	supported := false
+	for _, m := range methods {
+		if m == req_method {
+			supported = true
+			break
+		}
+	}
+	//reply to client
+	if supported == true {
+		_, err = conn.Write([]byte{0x05, req_method})
+		if err != nil {
+			log.Printf("failed to write method selection: %v", err)
+			return
+		}
+	} else {
+		// we don't support the required method (0xFF for no supported methods)
+		conn.Write([]byte{0x05, 0xFF})
+		log.Printf("client doesn't support required auth method")
 		return
 	}
 
