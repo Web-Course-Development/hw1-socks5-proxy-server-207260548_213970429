@@ -158,7 +158,112 @@ func handleConnection(conn net.Conn) {
 
 
 	// 3. Read CONNECT request
+	// read the first 4 bytes of the connect request (ver, cmd, rsv, atyp)
+	req_buffer_size := 4
+	req_buffer := make([]byte, req_buffer_size)
+	_, err = io.ReadFull(conn, req_buffer)
+	if err != nil {
+		log.Printf("failed to read connect request header: %v", err)
+		return
+	}
+
+	// verify SOCKS version again
+	if req_buffer[0] != 0x05 {
+		log.Printf("wrong SOCKS version in connect request: %x", req_buffer[0])
+		return
+	}
+
+	// verify command is CONNECT (0x01)
+	if req_buffer[1] != 0x01 {
+		// we only support CONNECT (0x01) reject anything else
+		log.Printf("unsupported command: %x", req_buffer[1])
+		return
+	}
+
+	// save the address type for the next step (IPv4 is 0x01 domain is 0x03)
+	atyp := req_buffer[3]
+
+	// variable to hold the parsed destination address as a string
+	dest_address := ""
+
+	// read the destination address based on atyp
+	if atyp == 0x01 {
+		// IPv4: 4 bytes
+		ipv4_buffer := make([]byte, 4)
+		_, err = io.ReadFull(conn, ipv4_buffer)
+		if err != nil {
+			log.Printf("failed to read IPv4 address: %v", err)
+			return
+		}
+		// format as a standard IP string using net.IP
+		dest_address = net.IP(ipv4_buffer).String()
+		
+	} else if atyp == 0x03 {
+		// domain Name: first byte is length then the string itself
+		domain_len_buffer := make([]byte, 1)
+		_, err = io.ReadFull(conn, domain_len_buffer)
+		if err != nil {
+			log.Printf("failed to read domain length: %v", err)
+			return
+		}
+		domain_len := int(domain_len_buffer[0])
+		
+		domain_buffer := make([]byte, domain_len)
+		_, err = io.ReadFull(conn, domain_buffer)
+		if err != nil {
+			log.Printf("failed to read domain name: %v", err)
+			return
+		}
+		dest_address = string(domain_buffer)
+		
+	} else {
+		// we're not asked to support IPv6 (0x04) for this homework
+		log.Printf("unsupported address type: %x", atyp)
+		return
+	}
+
+	// read the destination port (2 bytes)
+	port_buffer := make([]byte, 2)
+	_, err = io.ReadFull(conn, port_buffer)
+	if err != nil {
+		log.Printf("failed to read destination port: %v", err)
+		return
+	}
+
+	// convert the 2 bytes to a uint16 using BigEndian
+	dest_port := binary.BigEndian.Uint16(port_buffer)
+
+	// format the final target string like "host:port"
+	target := fmt.Sprintf("%s:%d", dest_address, dest_port)
+	log.Printf("client wants to connect to: %s", target)
+
+
 	// 4. Connect to target server
+	// use net.Dial to establish the TCP connection to the destination
+	target_conn, err := net.Dial("tcp", target)
+	if err != nil {
+		log.Printf("failed to connect to target %s: %v", target, err)
+		// send error reply (0x01 = general failure)
+		// format: VER, REP, RSV, ATYP, BND.ADDR (4 bytes), BND.PORT (2 bytes)
+		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+	// ensure the target connection gets closed when we are done
+	defer target_conn.Close()
+	
+	log.Printf("successfully connected to target: %s", target)
+
+
 	// 5. Send success/error reply
+	// 0x00 means success. The assignment allows us to send all zeros for the bound address and port.
+	_, err = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+	if err != nil {
+		log.Printf("failed to send success reply: %v", err)
+		return
+	}
+	
+	log.Printf("connection established and client notified")
+
+
 	// 6. Relay data between client and target
 }
