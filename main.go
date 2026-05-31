@@ -34,6 +34,22 @@ func handleConnection(conn net.Conn) {
 
 	// TODO: Implement SOCKS5 protocol
 	// 1. Read client greeting and negotiate authentication method
+	// make a buffer
+	buffer_size := 2
+	buffer := make([]byte, buffer_size)
+	//read #buffer_size bytes from the connection into the buffer
+	_, err := io.ReadFull(conn, buffer)
+	//check for error
+	if err != nil {
+		log.Printf("failed to read to buffer: %v", err)
+		return
+	}
+	//verify SOCKS (SOCKS5)
+	if buffer[0] != 5 {
+		log.Printf("wrong SOCKS version: %d", buffer[0])
+		return
+	}
+
 	// 2. Perform authentication if required (when PROXY_USER env var is set)
 	// 3. Read CONNECT request
 	// 4. Connect to target server
