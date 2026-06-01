@@ -5,6 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+
+	"encoding/binary"
+	"io"
+	"os"
+	"sync"
+
 )
 
 func main() {
@@ -255,6 +261,7 @@ func handleConnection(conn net.Conn) {
 
 
 	// 5. Send success/error reply
+	// (error reply is in previous step)
 	// 0x00 means success. The assignment allows us to send all zeros for the bound address and port.
 	_, err = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 	if err != nil {
@@ -266,4 +273,37 @@ func handleConnection(conn net.Conn) {
 
 
 	// 6. Relay data between client and target
+	// use a WaitGroup to handle our concurrent goroutines
+	var wg sync.WaitGroup
+	
+	// we have 2 directions to relay (client -> target and target -> client)
+	wg.Add(2)
+
+	// client -> target
+	go func() {
+		defer wg.Done()
+		// copy data from the client (conn) to the target (target_conn)
+		io.Copy(target_conn, conn)
+		
+		// signal EOF by closing the write half of the conn
+		if tcp_conn, ok := target_conn.(*net.TCPConn); ok {
+			tcp_conn.CloseWrite()
+		}
+	}()
+
+	// target -> client
+	go func() {
+		defer wg.Done()
+		// copy data from the target (target_conn) back to the client (conn)
+		io.Copy(conn, target_conn)
+		
+		// signal EOF by closing the write half of the conn
+		if tcp_conn, ok := conn.(*net.TCPConn); ok {
+			tcp_conn.CloseWrite()
+		}
+	}()
+
+	// block and wait here until both goroutines finish
+	wg.Wait()
+	log.Printf("relay finished connection closed for: %s", target)
 }
